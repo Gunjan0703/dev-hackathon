@@ -1,0 +1,14 @@
+from flask import Flask
+import os
+
+app = Flask(__name__)
+
+@app.route('/')
+def hello():
+    message = "Hello from a CI/CD Pipeline!"
+    return f"<h1>{message}</h1>"
+
+if __name__ == '__main__':
+    # Get port from environment variable or default to 8080
+    port = int(os.environ.get('PORT', 80))
+    app.run(host='0.0.0.0', port=port)
