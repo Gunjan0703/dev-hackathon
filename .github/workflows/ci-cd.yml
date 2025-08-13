@@ -5,20 +5,19 @@ on:
     branches: ["main"]
 
 jobs:
-  #lint:
-    #runs-on: ubuntu-latest
-    #steps:
-     # - uses: actions/checkout@v4
-      #- name: Install flake8
-        #run: pip install flake8
-      #- name: Run lint (non-blocking)
-       # run: |
-        #  flake8 . || echo "Lint warnings found, but continuing..."
-        #continue-on-error: true
+  runs-on: self-hosted
+  lint:
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install flake8
+        run: pip install flake8
+      - name: Run lint (non-blocking)
+        run: |
+          flake8 . || echo "Lint warnings found, but continuing..."
+        continue-on-error: true
 
 
  sca:
-  runs-on: ubuntu-latest
   needs: lint
   steps:
     - uses: actions/checkout@v4
@@ -32,7 +31,6 @@ jobs:
         severity: 'CRITICAL,HIGH'
       
   sast:
-    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Install Bandit
@@ -41,7 +39,6 @@ jobs:
         run: bandit -r .
 
   unit-test:
-    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Install deps
@@ -50,7 +47,6 @@ jobs:
         run: pytest || echo "No tests found"
 
   docker:
-    runs-on: ubuntu-latest
     needs: [lint, sca, sast, unit-test]
     steps:
       - uses: actions/checkout@v4
@@ -65,7 +61,6 @@ jobs:
         run: docker push ${{ secrets.DOCKER_USERNAME }}/flask-app:${{ github.sha }}
 
   deploy:
-    runs-on: self-hosted
     needs: docker
     steps:
       - uses: actions/checkout@v4
@@ -75,7 +70,6 @@ jobs:
           kubectl rollout status deployment/flask-app
 
   dast:
-    runs-on: ubuntu-latest
     needs: deploy
     steps:
       - name: Run OWASP ZAP Baseline Scan
@@ -84,7 +78,6 @@ jobs:
           target: "http://<YOUR_CLUSTER_PUBLIC_IP>:<NODEPORT>"
 
   security-test:
-    runs-on: ubuntu-latest
     needs: deploy
     steps:
       - name: Install Trivy
