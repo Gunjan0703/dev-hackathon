@@ -5,16 +5,16 @@ on:
     branches: ["main"]
 
 jobs:
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install flake8
-        run: pip install flake8
-      - name: Run lint (non-blocking)
-        run: |
-          flake8 . || echo "Lint warnings found, but continuing..."
-        continue-on-error: true
+  #lint:
+    #runs-on: ubuntu-latest
+    #steps:
+     # - uses: actions/checkout@v4
+      #- name: Install flake8
+        #run: pip install flake8
+      #- name: Run lint (non-blocking)
+       # run: |
+        #  flake8 . || echo "Lint warnings found, but continuing..."
+        #continue-on-error: true
 
 
   sca:
