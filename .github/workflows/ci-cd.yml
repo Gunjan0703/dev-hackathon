@@ -14,6 +14,7 @@ jobs:
       - name: Run lint (non-blocking)
         run: |
           flake8 . || echo "Lint warnings found, but continuing..."
+        continue-on-error: true
 
 
   sca:
