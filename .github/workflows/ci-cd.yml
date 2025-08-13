@@ -8,7 +8,7 @@ on:
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       
@@ -26,7 +26,7 @@ jobs:
         continue-on-error: true
 
   sca:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: lint
     steps:
       - uses: actions/checkout@v4
@@ -42,7 +42,7 @@ jobs:
         continue-on-error: true
 
   sast:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       
@@ -59,7 +59,7 @@ jobs:
         continue-on-error: true
 
   unit-test:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       
@@ -102,7 +102,7 @@ jobs:
         run: pytest -v || echo "Tests completed"
 
   docker:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [lint, sca, sast, unit-test]
     steps:
       - uses: actions/checkout@v4
@@ -140,7 +140,7 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-        if: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
+        if: ${{ secrets.DOCKER_USERNAME && secrets.DOCKER_PASSWORD }}
         
       - name: Build Docker image
         run: docker build -t flask-app:${{ github.sha }} .
@@ -159,7 +159,7 @@ jobs:
   # Uncomment and configure when you have a Kubernetes cluster set up
   
   # deploy:
-  #   runs-on: ubuntu-latest
+  #   runs-on: self-hosted
   #   needs: docker
   #   if: ${{ secrets.KUBECONFIG != '' }}
   #   steps:
@@ -179,7 +179,7 @@ jobs:
   #         kubectl rollout status deployment/flask-app
 
   # dast:
-  #   runs-on: ubuntu-latest
+  #   runs-on: self-hosted
   #   needs: deploy
   #   if: ${{ secrets.APP_URL != '' }}
   #   steps:
@@ -190,7 +190,7 @@ jobs:
   #       continue-on-error: true
 
   security-test:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: docker
     steps:
       - uses: actions/checkout@v4
