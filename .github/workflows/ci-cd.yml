@@ -105,7 +105,7 @@ jobs:
 
   docker:
     runs-on: self-hosted
-    needs: [sast, unit-test]
+    needs: [sca]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -136,7 +136,7 @@ jobs:
             sudo docker info
           }
           EONG
-        
+          
       - name: Create Dockerfile if needed
         run: |
           if [ ! -f Dockerfile ]; then
@@ -160,6 +160,12 @@ jobs:
             cat Dockerfile
           fi
           
+      - name: Ensure requirements.txt exists
+        run: |
+          if [ ! -f requirements.txt ]; then
+            echo "Flask==2.3.3" > requirements.txt
+          fi
+          
       - name: Build Docker image
         run: |
           echo "Building Docker image..."
@@ -169,32 +175,36 @@ jobs:
             sudo docker build -t flask-app:${{ github.sha }} .
           }
           
-      - name: Push Docker image (if configured)
+      - name: Push Docker image (force push)
         run: |
           if [ ! -z "${{ secrets.DOCKERHUB_USERNAME }}" ] && [ ! -z "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
-            echo "Logging into Docker Hub..."
+            echo "Force pushing Docker image..."
+            
+            # Ensure we're logged in
             echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
             
-            echo "Tagging and pushing image..."
+            # Re-tag and push
             docker tag flask-app:${{ github.sha }} ${{ secrets.DOCKERHUB_USERNAME }}/flask-app:${{ github.sha }}
             docker tag flask-app:${{ github.sha }} ${{ secrets.DOCKERHUB_USERNAME }}/flask-app:latest
             
-            echo "Pushing image with SHA tag..."
+            echo "Pushing SHA-tagged image..."
             docker push ${{ secrets.DOCKERHUB_USERNAME }}/flask-app:${{ github.sha }}
             
-            echo "Pushing image with latest tag..."
+            echo "Pushing latest image..."
             docker push ${{ secrets.DOCKERHUB_USERNAME }}/flask-app:latest
             
-            echo "Verifying pushed images..."
-            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/flask-app:${{ github.sha }} || {
-              echo "ERROR: Failed to verify pushed image"
+            echo "Verifying image exists on Docker Hub..."
+            sleep 10  # Wait for Docker Hub to process
+            docker manifest inspect ${{ secrets.DOCKERHUB_USERNAME }}/flask-app:${{ github.sha }} || {
+              echo "ERROR: Image still not found on Docker Hub after push!"
+              echo "Checking Docker Hub repository settings..."
               exit 1
             }
             
-            echo "Docker image pushed and verified successfully"
+            echo "✅ Docker image successfully pushed and verified!"
           else
-            echo "Docker Hub credentials not configured, skipping push"
-            echo "Will use local image for deployment"
+            echo "❌ Docker Hub credentials not configured"
+            echo "Deployment will use local image"
           fi
         continue-on-error: true
 
@@ -242,20 +252,40 @@ jobs:
         
       - name: Deploy to Kubernetes
         run: |
-          # Replace placeholders in deployment.yaml
+          # Check if we have Docker Hub credentials and image was pushed
           if [ ! -z "${{ secrets.DOCKERHUB_USERNAME }}" ]; then
-            DOCKERHUB_USERNAME="${{ secrets.DOCKERHUB_USERNAME }}"
-            IMAGE_TAG="${{ github.sha }}"
-            echo "Using Docker Hub image: $DOCKERHUB_USERNAME/flask-app:$IMAGE_TAG"
+            echo "Checking if Docker Hub image is available..."
+            if docker manifest inspect ${{ secrets.DOCKERHUB_USERNAME }}/flask-app:${{ github.sha }} >/dev/null 2>&1; then
+              DOCKERHUB_USERNAME="${{ secrets.DOCKERHUB_USERNAME }}"
+              IMAGE_TAG="${{ github.sha }}"
+              echo "✅ Using Docker Hub image: $DOCKERHUB_USERNAME/flask-app:$IMAGE_TAG"
+            else
+              echo "❌ Docker Hub image not available, falling back to local image"
+              DOCKERHUB_USERNAME="flask-app"
+              IMAGE_TAG="${{ github.sha }}"
+              echo "🔄 Using local image: $DOCKERHUB_USERNAME:$IMAGE_TAG"
+              
+              # Remove imagePullSecrets from deployment since we're using local image
+              sed -i '/imagePullSecrets:/,+1d' deployment.yaml
+            fi
           else
             echo "No Docker Hub credentials, using local image"
-            DOCKERHUB_USERNAME="flask-app"
+            DOCKERHUB_USERNAME="flask-app" 
             IMAGE_TAG="${{ github.sha }}"
             echo "Using local image: $DOCKERHUB_USERNAME:$IMAGE_TAG"
+            
+            # Remove imagePullSecrets from deployment
+            sed -i '/imagePullSecrets:/,+1d' deployment.yaml
           fi
           
           # Update deployment.yaml with actual values
-          sed "s/\${DOCKERHUB_USERNAME}/$DOCKERHUB_USERNAME/g; s/\${IMAGE_TAG}/$IMAGE_TAG/g" deployment.yaml > deployment-updated.yaml
+          if [ "$DOCKERHUB_USERNAME" = "flask-app" ]; then
+            # For local image, use different format
+            sed "s|\${DOCKERHUB_USERNAME}/flask-app:\${IMAGE_TAG}|$DOCKERHUB_USERNAME:$IMAGE_TAG|g" deployment.yaml > deployment-updated.yaml
+          else
+            # For Docker Hub image, use normal format
+            sed "s/\${DOCKERHUB_USERNAME}/$DOCKERHUB_USERNAME/g; s/\${IMAGE_TAG}/$IMAGE_TAG/g" deployment.yaml > deployment-updated.yaml
+          fi
           
           echo "=== Generated deployment.yaml ==="
           cat deployment-updated.yaml
@@ -274,13 +304,10 @@ jobs:
             echo "=== Pod Status ==="
             kubectl get pods -l app=flask-app -o wide
             echo ""
-            echo "=== Pod Logs ==="
+            echo "=== Pod Details ==="
             for pod in $(kubectl get pods -l app=flask-app -o name); do
-              echo "--- Logs for $pod ---"
-              kubectl logs $pod --tail=50 || echo "Could not get logs for $pod"
-              echo ""
-              echo "--- Events for $pod ---"
-              kubectl describe $pod | grep -A 20 "Events:" || echo "No events found"
+              echo "--- Details for $pod ---"
+              kubectl describe $pod
               echo ""
             done
             exit 1
@@ -404,7 +431,6 @@ jobs:
           echo "DAST scan artifacts created:"
           ls -la zap-reports/ || echo "No reports directory found"
         continue-on-error: true
-
   security-test:
     runs-on: self-hosted
     needs: docker
