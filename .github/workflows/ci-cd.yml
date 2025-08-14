@@ -9,6 +9,11 @@ on:
 jobs:
   lint:
     runs-on: self-hosted
+
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
     steps:
       - name: Debug - Check environment
         run: |
