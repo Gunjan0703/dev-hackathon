@@ -174,7 +174,7 @@ jobs:
           
           EXPOSE 80
           
-          CMD ["python", "app.py"]
+          CMD ["python", "main.py"]
           EOF
           else
             echo "Dockerfile already exists"
@@ -191,9 +191,9 @@ jobs:
         run: |
           echo "Building Docker image..."
           # Try without sudo first, then with sudo if needed
-          docker build -t flask-app:${{ github.sha }} . || {
+          docker build -t flask-app:v1}} . || {
             echo "Docker build failed, trying with sudo..."
-            sudo docker build -t flask-app:${{ github.sha }} .
+            sudo docker build -t flask-app:v1 .
           }
           
       - name: Push Docker image
@@ -202,18 +202,18 @@ jobs:
             echo "Pushing Docker image..."
             
             # Tag images for Docker Hub
-            docker tag flask-app:${{ github.sha }} ${{ secrets.DOCKERHUB_USERNAME }}/flask-app:${{ github.sha }}
-            docker tag flask-app:${{ github.sha }} ${{ secrets.DOCKERHUB_USERNAME }}/flask-app:latest
+            docker tag flask-app:v1 ${{ secrets.DOCKERHUB_USERNAME }}/flask-app:${{ github.sha }}
+            docker tag flask-app:v1 ${{ secrets.DOCKERHUB_USERNAME }}/flask-app:latest
             
             echo "Pushing SHA-tagged image..."
-            docker push ${{ secrets.DOCKERHUB_USERNAME }}/flask-app:${{ github.sha }}
+            docker push ${{ secrets.DOCKERHUB_USERNAME }}/flask-app:v1
             
             echo "Pushing latest image..."
-            docker push ${{ secrets.DOCKERHUB_USERNAME }}/flask-app:latest
+            docker push ${{ secrets.DOCKERHUB_USERNAME }}/flask-app:v1
             
             echo "Verifying image exists on Docker Hub..."
             sleep 10  # Wait for Docker Hub to process
-            docker manifest inspect ${{ secrets.DOCKERHUB_USERNAME }}/flask-app:${{ github.sha }} || {
+            docker manifest inspect ${{ secrets.DOCKERHUB_USERNAME }}/flask-app:v1 || {
               echo "WARNING: Image verification failed, but continuing..."
             }
             
