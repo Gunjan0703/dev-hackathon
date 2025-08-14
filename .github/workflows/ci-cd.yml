@@ -304,6 +304,7 @@ jobs:
           echo "Applying Kubernetes deployment...🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥"
           kubectl --kubeconfig=kubeconfig apply -f deployment.yaml
           echo "using deployment.yaml"
+          ls -la
 
           cat deployment.yaml | grep "DOCKER_USERNAME"
           cat deployment.yaml
