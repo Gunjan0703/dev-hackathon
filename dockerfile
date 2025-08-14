@@ -1,3 +1,4 @@
+# Use a lightweight base image
 FROM python:3.9-slim
 
 # Set working directory
@@ -7,21 +8,20 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application files
+# Copy the rest of the application files
 COPY . .
 
-# Set environment variables
-ENV FLASK_APP=main.py
-ENV FLASK_RUN_HOST=0.0.0.0
-ENV FLASK_RUN_PORT=80
-ENV PORT=80
-
-# Expose port 80
+# Expose the application port
 EXPOSE 80
 
-# Add healthcheck
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:80/health || exit 1
+# Add a healthcheck to ensure the app is responsive
+#HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+#    CMD curl -f http://localhost:80/health || exit 1
 
-# Run the application
+# Start the application with a production-ready WSGI server
+# (e.g., Gunicorn)
+# You would need to add gunicorn to your requirements.txt
+# CMD ["gunicorn", "--bind", "0.0.0.0:80", "main:app"]
+
+# For development, you can still use the Flask server
 CMD ["python", "main.py"]
