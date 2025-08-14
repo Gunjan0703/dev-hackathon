@@ -186,37 +186,181 @@ jobs:
           docker stop flask-test 2>/dev/null || sudo docker stop flask-test 2>/dev/null || echo "Container cleanup done"
         continue-on-error: true
 
-  # Note: Deploy and DAST jobs are commented out as they require actual infrastructure
-  # Uncomment and configure when you have a Kubernetes cluster set up
-  
-  # deploy:
-  #   runs-on: ubuntu-latest
-  #   needs: docker
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     
-  #     - name: Set up kubectl
-  #       uses: azure/setup-kubectl@v3
-  #       
-  #     - name: Configure kubectl
-  #       run: |
-  #         echo "${{ secrets.KUBECONFIG }}" | base64 -d > kubeconfig
-  #         export KUBECONFIG=kubeconfig
-  #         
-  #     - name: Deploy to Kubernetes
-  #       run: |
-  #         kubectl set image deployment/flask-app flask-app=${{ secrets.DOCKERHUB_USERNAME }}/flask-app:${{ github.sha }}
-  #         kubectl rollout status deployment/flask-app
+  deploy:
+    runs-on: self-hosted
+    needs: docker
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Check kubectl installation
+        run: |
+          kubectl version --client || {
+            echo "kubectl not found, installing..."
+            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+            chmod +x kubectl
+            sudo mv kubectl /usr/local/bin/
+          }
+          
+      - name: Verify Kubernetes connection
+        run: |
+          kubectl cluster-info || {
+            echo "Cannot connect to Kubernetes cluster"
+            echo "Please ensure kubeconfig is properly configured"
+            exit 1
+          }
+        continue-on-error: true
+        
+      - name: Create namespace if not exists
+        run: |
+          kubectl create namespace flask-app || echo "Namespace might already exist"
+        continue-on-error: true
+        
+      - name: Deploy to Kubernetes
+        run: |
+          # Replace placeholders in deployment.yaml
+          if [ ! -z "${{ secrets.DOCKER_USERNAME }}" ]; then
+            DOCKER_USERNAME="${{ secrets.DOCKER_USERNAME }}"
+            IMAGE_TAG="${{ github.sha }}"
+          else
+            echo "Using local image for deployment"
+            DOCKER_USERNAME="local"
+            IMAGE_TAG="${{ github.sha }}"
+          fi
+          
+          # Update deployment.yaml with actual values
+          sed "s/\${DOCKER_USERNAME}/$DOCKER_USERNAME/g; s/\${IMAGE_TAG}/$IMAGE_TAG/g" deployment.yaml > deployment-updated.yaml
+          
+          echo "Applying Kubernetes deployment..."
+          kubectl apply -f deployment-updated.yaml
+          
+          echo "Waiting for deployment to be ready..."
+          kubectl rollout status deployment/flask-app --timeout=300s || {
+            echo "Deployment failed or timed out"
+            kubectl describe deployment flask-app
+            kubectl get pods -l app=flask-app
+            exit 1
+          }
+          
+      - name: Get service information
+        run: |
+          echo "=== Deployment Status ==="
+          kubectl get deployments flask-app
+          echo ""
+          echo "=== Pods ==="
+          kubectl get pods -l app=flask-app
+          echo ""
+          echo "=== Service ==="
+          kubectl get service flask-service
+          echo ""
+          echo "=== Service URL ==="
+          NODE_PORT=$(kubectl get service flask-service -o jsonpath='{.spec.ports[0].nodePort}')
+          NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}')
+          if [ -z "$NODE_IP" ]; then
+            NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+          fi
+          echo "Application should be accessible at: http://$NODE_IP:$NODE_PORT"
+        continue-on-error: true
 
-  # dast:
-  #   runs-on: ubuntu-latest
-  #   needs: deploy
-  #   steps:
-  #     - name: Run OWASP ZAP Baseline Scan
-  #       uses: zaproxy/action-baseline@v0.12.0
-  #       with:
-  #         target: ${{ secrets.APP_URL }}
-  #       continue-on-error: true
+  dast:
+    runs-on: self-hosted
+    needs: deploy
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Get application URL
+        id: get_url
+        run: |
+          echo "Getting application URL..."
+          NODE_PORT=$(kubectl get service flask-service -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || echo "30080")
+          NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}' 2>/dev/null)
+          if [ -z "$NODE_IP" ]; then
+            NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null || echo "localhost")
+          fi
+          APP_URL="http://$NODE_IP:$NODE_PORT"
+          echo "app_url=$APP_URL" >> $GITHUB_OUTPUT
+          echo "Application URL: $APP_URL"
+          
+      - name: Wait for application to be ready
+        run: |
+          APP_URL="${{ steps.get_url.outputs.app_url }}"
+          echo "Waiting for application to be ready at $APP_URL"
+          
+          for i in {1..30}; do
+            if curl -f "$APP_URL" >/dev/null 2>&1; then
+              echo "Application is ready!"
+              break
+            fi
+            echo "Attempt $i: Application not ready yet, waiting..."
+            sleep 10
+          done
+          
+          # Final check
+          curl -f "$APP_URL" || {
+            echo "Application is not responding after 5 minutes"
+            echo "Continuing with DAST scan anyway..."
+          }
+        continue-on-error: true
+        
+      - name: Install OWASP ZAP
+        run: |
+          if ! command -v zap-baseline.py &> /dev/null; then
+            echo "Installing OWASP ZAP..."
+            
+            # Install Java (required for ZAP)
+            sudo apt update
+            sudo apt install -y openjdk-11-jdk wget
+            
+            # Download and install ZAP
+            wget -q https://github.com/zaproxy/zaproxy/releases/download/v2.14.0/ZAP_2_14_0_unix.sh -O zap_installer.sh
+            chmod +x zap_installer.sh
+            echo "y" | sudo ./zap_installer.sh -q
+            
+            # Add ZAP to PATH
+            echo 'export PATH=$PATH:/opt/zaproxy' >> ~/.bashrc
+            export PATH=$PATH:/opt/zaproxy
+          else
+            echo "OWASP ZAP already installed"
+          fi
+          
+      - name: Run OWASP ZAP Baseline Scan
+        run: |
+          APP_URL="${{ steps.get_url.outputs.app_url }}"
+          echo "Running DAST scan on: $APP_URL"
+          
+          # Create ZAP reports directory
+          mkdir -p zap-reports
+          
+          # Run ZAP baseline scan
+          export PATH=$PATH:/opt/zaproxy
+          
+          /opt/zaproxy/zap-baseline.py \
+            -t "$APP_URL" \
+            -J zap-reports/zap-baseline-report.json \
+            -H zap-reports/zap-baseline-report.html \
+            -r zap-reports/zap-baseline-report.md \
+            --autooff \
+            -I || {
+              echo "DAST scan completed with findings"
+              echo "Check the reports for security issues"
+            }
+          
+          echo "DAST scan completed. Reports generated in zap-reports/"
+          
+          # Show summary if available
+          if [ -f zap-reports/zap-baseline-report.md ]; then
+            echo "=== DAST Scan Summary ==="
+            head -20 zap-reports/zap-baseline-report.md
+          fi
+        continue-on-error: true
+        
+      - name: Upload DAST Reports
+        run: |
+          echo "DAST scan artifacts created:"
+          ls -la zap-reports/ || echo "No reports directory found"
+        continue-on-error: true
 
   security-test:
     runs-on: self-hosted
@@ -231,3 +375,5 @@ jobs:
           format: 'table'
           severity: 'CRITICAL,HIGH,MEDIUM'
         continue-on-error: true
+
+  
