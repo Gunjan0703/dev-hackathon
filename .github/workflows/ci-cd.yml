@@ -188,7 +188,12 @@ jobs:
             docker tag flask-app:${{ github.sha }} ${{ secrets.DOCKERHUB_USERNAME }}/flask-app:latest
             
             echo "Pushing SHA-tagged image..."
+            
+            docker tag flask-app:${{ github.sha }} ${{ secrets.DOCKERHUB_USERNAME }}/flask-app:latest
+
             docker push ${{ secrets.DOCKERHUB_USERNAME }}/flask-app:${{ github.sha }}
+            docker push ${{ secrets.DOCKERHUB_USERNAME }}/flask-app:latest
+
             
             echo "Pushing latest image..."
             docker push ${{ secrets.DOCKERHUB_USERNAME }}/flask-app:latest
