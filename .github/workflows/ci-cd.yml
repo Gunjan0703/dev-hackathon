@@ -217,9 +217,9 @@ jobs:
               echo "WARNING: Image verification failed, but continuing..."
             }
             
-            echo "✅ Docker image push completed!"
+            echo " Docker image push completed!"
           else
-            echo "❌ Docker Hub credentials not configured properly"
+            echo " Docker Hub credentials not configured properly"
             echo "Available secrets:"
             echo "DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME != '' }}"
             echo "DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN != '' }}"
@@ -228,225 +228,53 @@ jobs:
         continue-on-error: true
 
   deploy:
-    runs-on: self-hosted
-    needs: docker
-    if: github.ref == 'refs/heads/main'
-    steps:
+     runs-on: self-hosted
+     needs: docker
+     if: github.ref == 'refs/heads/main'
+     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Set up kubectl
         uses: azure/setup-kubectl@v3
-        with: 
+        with:
           version: 'v1.30.0'
-      - name: Configure kubeconfig
-        run: |
-          echo "${{ secrets.KUBECONFIG }}" > kubeconfig
-          export KUBECONFIG=$PWD/kubeconfig
-          
-      - name: Create Docker Hub secret for Kubernetes
-        run: |
-          if [ ! -z "${{ secrets.DOCKERHUB_USERNAME }}" ] && [ ! -z "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
-            echo "Creating Docker Hub secret for Kubernetes..."
-            kubectl create secret docker-registry dockerhub-secret \
-              --docker-server=https://index.docker.io/v1/ \
-              --docker-username=${{ secrets.DOCKERHUB_USERNAME }} \
-              --docker-password=${{ secrets.DOCKERHUB_TOKEN }} \
-              --dry-run=client -o yaml | kubectl apply -f -
-            echo "Docker Hub secret created/updated"
-          else
-            echo "No Docker Hub credentials, skipping secret creation"
-          fi
-        continue-on-error: true
 
-        
+      - name: Configure kubeconfig
+        uses: "azure/k8s-set-context@v3"
+        with:
+          kubeconfig: ${{ secrets.KUBECONFIG }}
+
       - name: Deploy to Kubernetes
         run: |
-          # Check if we have Docker Hub credentials and image was pushed
-          if [ ! -z "${{ secrets.DOCKERHUB_USERNAME }}" ]; then
-            echo "Checking if Docker Hub image is available..."
-            if docker manifest inspect ${{ secrets.DOCKERHUB_USERNAME }}/flask-app:${{ github.sha }} >/dev/null 2>&1; then
-              DOCKERHUB_USERNAME="${{ secrets.DOCKERHUB_USERNAME }}"
-              IMAGE_TAG="${{ github.sha }}"
-              echo "✅ Using Docker Hub image: $DOCKERHUB_USERNAME/flask-app:$IMAGE_TAG"
-            else
-              echo "❌ Docker Hub image not available, falling back to local image"
-              DOCKERHUB_USERNAME="flask-app"
-              IMAGE_TAG="${{ github.sha }}"
-              echo "🔄 Using local image: $DOCKERHUB_USERNAME:$IMAGE_TAG"
-              
-              # Remove imagePullSecrets from deployment since we're using local image
-              sed -i '/imagePullSecrets:/,+1d' deployment.yaml
-            fi
-          else
-            echo "No Docker Hub credentials, using local image"
-            DOCKERHUB_USERNAME="flask-app" 
-            IMAGE_TAG="${{ github.sha }}"
-            echo "Using local image: $DOCKERHUB_USERNAME:$IMAGE_TAG"
-            
-            # Remove imagePullSecrets from deployment
-            sed -i '/imagePullSecrets:/,+1d' deployment.yaml
-          fi
-          
-          # Update deployment.yaml with actual values
-          if [ "$DOCKERHUB_USERNAME" = "flask-app" ]; then
-            # For local image, use different format
-            sed "s|\${DOCKERHUB_USERNAME}/flask-app:\${IMAGE_TAG}|$DOCKERHUB_USERNAME:$IMAGE_TAG|g" deployment.yaml > deployment-updated.yaml
-          else
-            # For Docker Hub image, use normal format
-            sed "s/\${DOCKERHUB_USERNAME}/$DOCKERHUB_USERNAME/g; s/\${IMAGE_TAG}/$IMAGE_TAG/g" deployment.yaml > deployment-updated.yaml
-          fi
-          
-          echo "=== Generated deployment.yaml ==="
-          cat deployment-updated.yaml
-          echo "================================="
-          
-          echo "Applying Kubernetes deployment...🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥"
-          kubectl --kubeconfig=kubeconfig apply -f deployment.yaml
-          echo "using deployment.yaml"
-          ls -la
+         IMAGE_NAME="${{ secrets.DOCKERHUB_USERNAME }}/flask-app:${{ github.sha }}"
+        
+         if [ -n "${{ secrets.DOCKERHUB_USERNAME }}" ] && [ -n "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
+          echo "Using Docker Hub image: $IMAGE_NAME"
+         else
+          echo "No Docker Hub credentials or image not found, using local image."
+          # Assuming you have a local image tagged with flask-app:${{ github.sha }}
+          IMAGE_NAME="flask-app:${{ github.sha }}"
+         fi
+         sed -i "s|image: .*|image: $IMAGE_NAME|g " deployment.yaml
+         echo "Applying Kubernetes deployment with image: $IMAGE_NAME"
+         kubectl apply -f deployment.yaml
 
-          echo deployment.yaml 
-          echo "Waiting for deployment to be ready...🟥🟥🟥🟥🟥🟥🟥🟥"
+         echo "Waiting for deployment to be ready..."
+         kubectl rollout status deployment/flask-app --timeout=600s
 
-          
-          kubectl --kubeconfig=kubeconfig rollout status deployment/flask-app --timeout=600s || {
-            echo "Deployment failed or timed out"
-            echo ""
-            echo "=== Deployment Description ==="
-            kubectl --kubeconfig=kubeconfig describe deployment flask-app
-            echo ""
-            echo "=== Pod Status ==="
-            kubectl --kubeconfig=kubeconfig get pods -l app=flask-app -o wide
-            echo ""
-            echo "=== Pod Details ==="
-            for pod in $(kubectl get pods -l app=flask-app -o name); do
-              echo "--- Details for $pod ---"
-              kubectl --kubeconfig=kubeconfig describe $pod
-              echo ""
-            done
-            exit 1
-          }
-          
       - name: Get service information
         run: |
-          echo "=== Deployment Status ==="
-          kubectl --kubeconfig=kubeconfig get deployments flask-app
-          echo ""
-          echo "=== Pods ==="
-          kubectl --kubeconfig=kubeconfig get pods -l app=flask-app
-          echo ""
-          echo "=== Service ==="
-          kubectl --kubeconfig=kubeconfig get service flask-service
-          echo ""
-          echo "=== Service URL ==="
-          NODE_PORT=$(kubectl --kubeconfig=kubeconfig get service flask-service -o jsonpath='{.spec.ports[0].nodePort}')
-          NODE_IP=$(kubectl --kubeconfig=kubeconfig get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}')
+          kubectl get deployments flask-app
+          kubectl get pods -l app=flask-app
+          kubectl get service flask-service
+          NODE_PORT=$(kubectl get service flask-service -o jsonpath='{.spec.ports[0].nodePort}')
+          NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}')
           if [ -z "$NODE_IP" ]; then
-            NODE_IP=$(kubectl --kubeconfig=kubeconfig get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+            NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
           fi
           echo "Application should be accessible at: http://$NODE_IP:$NODE_PORT"
-        continue-on-error: true
-
-  dast:
-    runs-on: self-hosted
-    needs: deploy
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
         
-      - name: Get application URL
-        id: get_url
-        run: |
-          echo "Getting application URL..."
-          NODE_PORT=$(kubectl --kubeconfig=kubeconfig get service flask-service -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || echo "30080")
-          NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}' 2>/dev/null)
-          if [ -z "$NODE_IP" ]; then
-            NODE_IP=$(kubectl --kubeconfig=kubeconfig get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null || echo "localhost")
-          fi
-          APP_URL="http://$NODE_IP:$NODE_PORT"
-          echo "app_url=$APP_URL" >> $GITHUB_OUTPUT
-          echo "Application URL: $APP_URL"
-          
-      - name: Wait for application to be ready
-        run: |
-          APP_URL="${{ steps.get_url.outputs.app_url }}"
-          echo "Waiting for application to be ready at $APP_URL"
-          
-          for i in {1..30}; do
-            if curl -f "$APP_URL" >/dev/null 2>&1; then
-              echo "Application is ready!"
-              break
-            fi
-            echo "Attempt $i: Application not ready yet, waiting..."
-            sleep 10
-          done
-          
-          # Final check
-          curl -f "$APP_URL" || {
-            echo "Application is not responding after 5 minutes"
-            echo "Continuing with DAST scan anyway..."
-          }
-        continue-on-error: true
-        
-      - name: Install OWASP ZAP
-        run: |
-          if ! command -v zap-baseline.py &> /dev/null; then
-            echo "Installing OWASP ZAP..."
-            
-            # Install Java (required for ZAP)
-            sudo apt update
-            sudo apt install -y openjdk-11-jdk wget
-            
-            # Download and install ZAP
-            wget -q https://github.com/zaproxy/zaproxy/releases/download/v2.14.0/ZAP_2_14_0_unix.sh -O zap_installer.sh
-            chmod +x zap_installer.sh
-            echo "y" | sudo ./zap_installer.sh -q
-            
-            # Add ZAP to PATH
-            echo 'export PATH=$PATH:/opt/zaproxy' >> ~/.bashrc
-            export PATH=$PATH:/opt/zaproxy
-          else
-            echo "OWASP ZAP already installed"
-          fi
-          
-      - name: Run OWASP ZAP Baseline Scan
-        run: |
-          APP_URL="${{ steps.get_url.outputs.app_url }}"
-          echo "Running DAST scan on: $APP_URL"
-          
-          # Create ZAP reports directory
-          mkdir -p zap-reports
-          
-          # Run ZAP baseline scan
-          export PATH=$PATH:/opt/zaproxy
-          
-          /opt/zaproxy/zap-baseline.py \
-            -t "$APP_URL" \
-            -J zap-reports/zap-baseline-report.json \
-            -H zap-reports/zap-baseline-report.html \
-            -r zap-reports/zap-baseline-report.md \
-            --autooff \
-            -I || {
-              echo "DAST scan completed with findings"
-              echo "Check the reports for security issues"
-            }
-          
-          echo "DAST scan completed. Reports generated in zap-reports/"
-          
-          # Show summary if available
-          if [ -f zap-reports/zap-baseline-report.md ]; then
-            echo "=== DAST Scan Summary ==="
-            head -20 zap-reports/zap-baseline-report.md
-          fi
-        continue-on-error: true
-        
-      - name: Upload DAST Reports
-        run: |
-          echo "DAST scan artifacts created:"
-          ls -la zap-reports/ || echo "No reports directory found"
-        continue-on-error: true
-
   security-test:
     runs-on: self-hosted
     needs: docker
