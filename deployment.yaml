@@ -12,9 +12,14 @@ spec:
       labels:
         app: flask-app
     spec:
+  template:
+    spec:
+      imagePullSecrets:  
+      - name: dockerhub-secret
       containers:
       - name: flask-app
-        image: {DOCKERHUB_USERNAME}/flask-app:latest
+        image: ${DOCKERHUB_USERNAME}/flask-app:${IMAGE_TAG} 
+        imagePullPolicy: Always
         ports:
         - containerPort: 80
       imagePullSecrets:
