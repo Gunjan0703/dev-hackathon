@@ -169,21 +169,33 @@ jobs:
             sudo docker build -t flask-app:${{ github.sha }} .
           }
           
-      - name: Test Docker image
+      - name: Push Docker image (if configured)
         run: |
-          echo "Testing Docker image..."
-          # Try without sudo first, then with sudo
-          (docker run --rm -d -p 8080:80 --name flask-test flask-app:${{ github.sha }} || 
-           sudo docker run --rm -d -p 8080:80 --name flask-test flask-app:${{ github.sha }}) || {
-            echo "Could not start container"
-            exit 0
-          }
-          
-          sleep 5
-          curl -f http://localhost:8080 || echo "Health check failed"
-          
-          # Cleanup
-          docker stop flask-test 2>/dev/null || sudo docker stop flask-test 2>/dev/null || echo "Container cleanup done"
+          if [ ! -z "${{ secrets.DOCKERHUB_USERNAME }}" ] && [ ! -z "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
+            echo "Logging into Docker Hub..."
+            echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+            
+            echo "Tagging and pushing image..."
+            docker tag flask-app:${{ github.sha }} ${{ secrets.DOCKERHUB_USERNAME }}/flask-app:${{ github.sha }}
+            docker tag flask-app:${{ github.sha }} ${{ secrets.DOCKERHUB_USERNAME }}/flask-app:latest
+            
+            echo "Pushing image with SHA tag..."
+            docker push ${{ secrets.DOCKERHUB_USERNAME }}/flask-app:${{ github.sha }}
+            
+            echo "Pushing image with latest tag..."
+            docker push ${{ secrets.DOCKERHUB_USERNAME }}/flask-app:latest
+            
+            echo "Verifying pushed images..."
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/flask-app:${{ github.sha }} || {
+              echo "ERROR: Failed to verify pushed image"
+              exit 1
+            }
+            
+            echo "Docker image pushed and verified successfully"
+          else
+            echo "Docker Hub credentials not configured, skipping push"
+            echo "Will use local image for deployment"
+          fi
         continue-on-error: true
 
   deploy:
@@ -212,34 +224,65 @@ jobs:
           }
         continue-on-error: true
         
-      - name: Create namespace if not exists
+      - name: Create Docker Hub secret for Kubernetes
         run: |
-          kubectl create namespace flask-app || echo "Namespace might already exist"
+          if [ ! -z "${{ secrets.DOCKERHUB_USERNAME }}" ] && [ ! -z "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
+            echo "Creating Docker Hub secret for Kubernetes..."
+            kubectl create secret docker-registry dockerhub-secret \
+              --docker-server=https://index.docker.io/v1/ \
+              --docker-username=${{ secrets.DOCKERHUB_USERNAME }} \
+              --docker-password=${{ secrets.DOCKERHUB_TOKEN }} \
+              --docker-email=your-email@example.com \
+              --dry-run=client -o yaml | kubectl apply -f -
+            echo "Docker Hub secret created/updated"
+          else
+            echo "No Docker Hub credentials, skipping secret creation"
+          fi
         continue-on-error: true
         
       - name: Deploy to Kubernetes
         run: |
           # Replace placeholders in deployment.yaml
           if [ ! -z "${{ secrets.DOCKERHUB_USERNAME }}" ]; then
-            DOCKER_USERNAME="${{ secrets.DOCKERHUB_USERNAME }}"
+            DOCKERHUB_USERNAME="${{ secrets.DOCKERHUB_USERNAME }}"
             IMAGE_TAG="${{ github.sha }}"
+            echo "Using Docker Hub image: $DOCKERHUB_USERNAME/flask-app:$IMAGE_TAG"
           else
-            echo "Using local image for deployment"
-            DOCKER_USERNAME="local"
+            echo "No Docker Hub credentials, using local image"
+            DOCKERHUB_USERNAME="flask-app"
             IMAGE_TAG="${{ github.sha }}"
+            echo "Using local image: $DOCKERHUB_USERNAME:$IMAGE_TAG"
           fi
           
           # Update deployment.yaml with actual values
-          sed "s/\${DOCKER_USERNAME}/$DOCKER_USERNAME/g; s/\${IMAGE_TAG}/$IMAGE_TAG/g" deployment.yaml > deployment-updated.yaml
+          sed "s/\${DOCKERHUB_USERNAME}/$DOCKERHUB_USERNAME/g; s/\${IMAGE_TAG}/$IMAGE_TAG/g" deployment.yaml > deployment-updated.yaml
+          
+          echo "=== Generated deployment.yaml ==="
+          cat deployment-updated.yaml
+          echo "================================="
           
           echo "Applying Kubernetes deployment..."
           kubectl apply -f deployment-updated.yaml
           
           echo "Waiting for deployment to be ready..."
-          kubectl rollout status deployment/flask-app --timeout=300s || {
+          kubectl rollout status deployment/flask-app --timeout=600s || {
             echo "Deployment failed or timed out"
+            echo ""
+            echo "=== Deployment Description ==="
             kubectl describe deployment flask-app
-            kubectl get pods -l app=flask-app
+            echo ""
+            echo "=== Pod Status ==="
+            kubectl get pods -l app=flask-app -o wide
+            echo ""
+            echo "=== Pod Logs ==="
+            for pod in $(kubectl get pods -l app=flask-app -o name); do
+              echo "--- Logs for $pod ---"
+              kubectl logs $pod --tail=50 || echo "Could not get logs for $pod"
+              echo ""
+              echo "--- Events for $pod ---"
+              kubectl describe $pod | grep -A 20 "Events:" || echo "No events found"
+              echo ""
+            done
             exit 1
           }
           
