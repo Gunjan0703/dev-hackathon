@@ -11,7 +11,7 @@ def hello():
     return f"<h1>{message}</h1>"
 
 
-@app.router('/health')
+@app.route('/health')
 def health():
     return{'status':'healthy','version':'1.0'},200
 if __name__ == '__main__':
