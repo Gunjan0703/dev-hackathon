@@ -301,11 +301,11 @@ jobs:
           cat deployment-updated.yaml
           echo "================================="
           
-          echo "Applying Kubernetes deployment..."
+          echo "Applying Kubernetes deployment...🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥"
           kubectl --kubeconfig=kubeconfig apply -f deployment.yaml
           echo "using deployment.yaml"
           
-          echo "Waiting for deployment to be ready..."
+          echo "Waiting for deployment to be ready...🟥🟥🟥🟥🟥🟥🟥🟥"
           kubectl --kubeconfig=kubeconfig rollout status deployment/flask-app --timeout=600s || {
             echo "Deployment failed or timed out"
             echo ""
