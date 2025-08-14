@@ -220,8 +220,8 @@ jobs:
       - name: Deploy to Kubernetes
         run: |
           # Replace placeholders in deployment.yaml
-          if [ ! -z "${{ secrets.DOCKER_USERNAME }}" ]; then
-            DOCKER_USERNAME="${{ secrets.DOCKER_USERNAME }}"
+          if [ ! -z "${{ secrets.DOCKERHUB_USERNAME }}" ]; then
+            DOCKER_USERNAME="${{ secrets.DOCKERHUB_USERNAME }}"
             IMAGE_TAG="${{ github.sha }}"
           else
             echo "Using local image for deployment"
