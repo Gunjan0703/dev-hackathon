@@ -10,18 +10,27 @@ jobs:
   lint:
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
-          
-      - name: Install flake8
-        run: pip install flake8
-        
-      - name: Run lint (non-blocking)
+      - name: Debug - Check environment
         run: |
+          echo "=== Environment Check ==="
+          whoami
+          pwd
+          python3 --version || echo "Python3 not found"
+          pip3 --version || echo "Pip3 not found"
+          docker --version || echo "Docker not found"
+          echo "=== End Environment Check ==="
+          
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Install flake8
+        run: |
+          echo "Installing flake8..."
+          pip3 install flake8 || python3 -m pip install flake8
+          
+      - name: Run lint
+        run: |
+          echo "Running flake8 lint check..."
           flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics || echo "Lint warnings found, but continuing..."
         continue-on-error: true
 
