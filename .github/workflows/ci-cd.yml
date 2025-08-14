@@ -229,25 +229,16 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        
-      - name: Check kubectl installation
+
+      - name: Set up kubectl
+        uses: aws/setup-kubectl@v3
+        with: 
+          version: 'v1.30.0'
+      - name: Configure kubeconfig
         run: |
-          kubectl version --client || {
-            echo "kubectl not found, installing..."
-            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-            chmod +x kubectl
-            sudo mv kubectl /usr/local/bin/
-          }
+          echo "${{ secrets.KUBECONFIG }}" > kubeconfig
+          export KUBECONFIG=$PWD/kubeconfig
           
-      - name: Verify Kubernetes connection
-        run: |
-          kubectl cluster-info || {
-            echo "Cannot connect to Kubernetes cluster"
-            echo "Please ensure kubeconfig is properly configured"
-            exit 1
-          }
-        continue-on-error: true
-        
       - name: Create Docker Hub secret for Kubernetes
         run: |
           if [ ! -z "${{ secrets.DOCKERHUB_USERNAME }}" ] && [ ! -z "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
@@ -262,6 +253,7 @@ jobs:
             echo "No Docker Hub credentials, skipping secret creation"
           fi
         continue-on-error: true
+
         
       - name: Deploy to Kubernetes
         run: |
@@ -305,22 +297,22 @@ jobs:
           echo "================================="
           
           echo "Applying Kubernetes deployment..."
-          kubectl apply -f deployment-updated.yaml
+          kubectl --kubeconfig=kubeconfig apply -f deployment-updated.yaml
           
           echo "Waiting for deployment to be ready..."
-          kubectl rollout status deployment/flask-app --timeout=600s || {
+          kubectl --kubeconfig=kubeconfig rollout status deployment/flask-app --timeout=600s || {
             echo "Deployment failed or timed out"
             echo ""
             echo "=== Deployment Description ==="
-            kubectl describe deployment flask-app
+            kubectl --kubeconfig=kubeconfig describe deployment flask-app
             echo ""
             echo "=== Pod Status ==="
-            kubectl get pods -l app=flask-app -o wide
+            kubectl --kubeconfig=kubeconfig get pods -l app=flask-app -o wide
             echo ""
             echo "=== Pod Details ==="
             for pod in $(kubectl get pods -l app=flask-app -o name); do
               echo "--- Details for $pod ---"
-              kubectl describe $pod
+              kubectl --kubeconfig=kubeconfig describe $pod
               echo ""
             done
             exit 1
@@ -329,19 +321,19 @@ jobs:
       - name: Get service information
         run: |
           echo "=== Deployment Status ==="
-          kubectl get deployments flask-app
+          kubectl --kubeconfig=kubeconfig get deployments flask-app
           echo ""
           echo "=== Pods ==="
-          kubectl get pods -l app=flask-app
+          kubectl --kubeconfig=kubeconfig get pods -l app=flask-app
           echo ""
           echo "=== Service ==="
-          kubectl get service flask-service
+          kubectl --kubeconfig=kubeconfig get service flask-service
           echo ""
           echo "=== Service URL ==="
-          NODE_PORT=$(kubectl get service flask-service -o jsonpath='{.spec.ports[0].nodePort}')
-          NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}')
+          NODE_PORT=$(kubectl --kubeconfig=kubeconfig get service flask-service -o jsonpath='{.spec.ports[0].nodePort}')
+          NODE_IP=$(kubectl --kubeconfig=kubeconfig get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}')
           if [ -z "$NODE_IP" ]; then
-            NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+            NODE_IP=$(kubectl --kubeconfig=kubeconfig get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
           fi
           echo "Application should be accessible at: http://$NODE_IP:$NODE_PORT"
         continue-on-error: true
@@ -357,10 +349,10 @@ jobs:
         id: get_url
         run: |
           echo "Getting application URL..."
-          NODE_PORT=$(kubectl get service flask-service -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || echo "30080")
+          NODE_PORT=$(kubectl --kubeconfig=kubeconfig get service flask-service -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || echo "30080")
           NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}' 2>/dev/null)
           if [ -z "$NODE_IP" ]; then
-            NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null || echo "localhost")
+            NODE_IP=$(kubectl --kubeconfig=kubeconfig get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null || echo "localhost")
           fi
           APP_URL="http://$NODE_IP:$NODE_PORT"
           echo "app_url=$APP_URL" >> $GITHUB_OUTPUT
