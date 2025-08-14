@@ -14,9 +14,11 @@ spec:
       labels:
         app: flask-app
     spec:
+      imagePullSecrets:
+      - name: dockerhub-secret
       containers:
       - name: flask-app
-        image: ${DOCKER_USERNAME}/flask-app:${IMAGE_TAG}
+        image: ${DOCKERHUB_USERNAME}/flask-app:${IMAGE_TAG}
         ports:
         - containerPort: 80
         env:
